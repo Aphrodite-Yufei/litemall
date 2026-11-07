@@ -1,0 +1,91 @@
+version: '3.8'
+
+# 说明：云电脑无 iptables NAT 权限，无法使用 bridge 网络 + 端口映射，
+# 因此全部服务采用 host 网络模式（端口直接绑定宿主机），功能等价。
+
+services:
+  # ==================== MySQL ====================
+  mysql:
+    image: mysql:5.7
+    container_name: litemall-mysql
+    network_mode: host
+    environment:
+      MYSQL_ROOT_PASSWORD: litemall123456
+      MYSQL_DATABASE: litemall
+      TZ: Asia/Shanghai
+    command:
+      --character-set-server=utf8
+      --collation-server=utf8_general_ci
+      --default-authentication-plugin=mysql_native_password
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./db/init-sql:/docker-entrypoint-initdb.d
+    restart: always
+
+  # ==================== litemall 后端 ====================
+  litemall:
+    image: eclipse-temurin:8-jre-alpine
+    container_name: litemall-app
+    network_mode: host
+    volumes:
+      - ./litemall/litemall-all.jar:/app/litemall.jar
+      - litemall_storage:/storage
+      - litemall_logs:/logs
+    environment:
+      - TZ=Asia/Shanghai
+      - SPRING_DATASOURCE_URL=jdbc:mysql://localhost:3306/litemall?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=litemall123456
+    command: java -Dfile.encoding=UTF-8 -jar /app/litemall.jar
+    depends_on:
+      - mysql
+    restart: always
+
+  # ==================== SonarQube 社区版（内置 H2，简化部署） ====================
+  sonarqube:
+    image: sonarqube:lts-community
+    container_name: sonarqube
+    network_mode: host
+    environment:
+      - SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_extensions:/opt/sonarqube/extensions
+      - sonarqube_logs:/opt/sonarqube/logs
+    restart: always
+
+  # ==================== Prometheus ====================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    network_mode: host
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--web.enable-lifecycle'
+    restart: always
+
+  # ==================== Grafana ====================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    network_mode: host
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: always
+
+volumes:
+  mysql_data:
+  litemall_storage:
+  litemall_logs:
+  sonarqube_data:
+  sonarqube_extensions:
+  sonarqube_logs:
+  grafana_data:
