@@ -119,6 +119,10 @@ public class WxCartController {
         }
 
         Integer productId = cart.getProductId();
+        // 实验三修复：number 缺失时先判空，避免 cart.getNumber().intValue() 抛出 NPE（502 崩溃）
+        if (cart.getNumber() == null) {
+            return ResponseUtil.badArgument();
+        }
         Integer number = cart.getNumber().intValue();
         Integer goodsId = cart.getGoodsId();
         if (!ObjectUtils.allNotNull(productId, number, goodsId)) {
@@ -193,6 +197,10 @@ public class WxCartController {
         }
 
         Integer productId = cart.getProductId();
+        // 实验三修复：number 缺失时先判空，避免 cart.getNumber().intValue() 抛出 NPE（502 崩溃）
+        if (cart.getNumber() == null) {
+            return ResponseUtil.badArgument();
+        }
         Integer number = cart.getNumber().intValue();
         Integer goodsId = cart.getGoodsId();
         if (!ObjectUtils.allNotNull(productId, number, goodsId)) {
@@ -259,6 +267,10 @@ public class WxCartController {
             return ResponseUtil.unlogin();
         }
         Integer productId = cart.getProductId();
+        // 实验三修复：number 缺失时先判空，避免 cart.getNumber().intValue() 抛出 NPE（502 崩溃）
+        if (cart.getNumber() == null) {
+            return ResponseUtil.badArgument();
+        }
         Integer number = cart.getNumber().intValue();
         Integer goodsId = cart.getGoodsId();
         Integer id = cart.getId();

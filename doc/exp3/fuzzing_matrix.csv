@@ -1,0 +1,54 @@
+endpoint,category,payload,httpStatus,errno,verdict
+/wx/order/cancel,类型混淆,orderId="1001"(字符串),200,402,契约内拒绝
+/wx/order/cancel,安全攻击,orderId=1';DROP TABLE(注入),200,402,契约内拒绝
+/wx/order/cancel,极端数值,orderId=2147483647,200,402,契约内拒绝
+/wx/cart/update,类型混淆,number="3",200,0,正常受理
+/wx/cart/update,类型混淆,id=true(布尔),200,402,契约内拒绝
+/wx/cart/update,极端数值,number=32768,200,402,契约内拒绝
+/wx/cart/update,极端数值,id=Integer.MIN_VALUE,200,402,契约内拒绝
+/wx/cart/update,安全攻击,IDOR:修改他人cartId=999,200,402,契约内拒绝
+/wx/address/detail,安全攻击,id=1 OR 1=1,200,402,契约内拒绝
+/wx/address/detail,安全攻击,id=1;DROP TABLE,200,402,契约内拒绝
+/wx/address/detail,极端数值,id=2147483647,200,402,契约内拒绝
+/wx/address/detail,类型混淆,id=abc,200,402,契约内拒绝
+/wx/order/submit,安全攻击,IDOR:使用他人cartId=5下单,200,506,契约内拒绝
+/wx/order/submit,安全攻击,IDOR:使用他人addressId=2,200,401,契约内拒绝
+/wx/order/submit,安全攻击,货品已删除(下单引用失效productId),200,402,契约内拒绝
+/wx/order/submit,安全攻击,负数量购物车(number=-3)下单,200,402,契约内拒绝
+/wx/order/detail,类型混淆,orderId=abc,200,402,契约内拒绝
+/wx/order/detail,安全攻击,orderId=1 OR 1=1,200,402,契约内拒绝
+/wx/order/detail,极端数值,orderId=2147483647,200,720,业务码拒绝
+/wx/order/detail,极端数值,orderId=-1,200,720,业务码拒绝
+/wx/order/submit,类型混淆,cartId="0"(字符串),200,0,正常受理
+/wx/order/submit,类型混淆,addressId="abc",200,0,正常受理
+/wx/order/submit,类型混淆,cartId=[0](数组),200,0,正常受理
+/wx/order/submit,类型混淆,全字段null,200,0,正常受理
+/wx/order/submit,类型混淆,addressId={"id":1}(对象),200,0,正常受理
+/wx/order/submit,类型混淆,空JSON {},200,401,契约内拒绝
+/wx/address/save,编码异常,name长度10000,200,0,正常受理
+/wx/address/save,编码异常,name含emoji,200,0,正常受理
+/wx/address/save,安全攻击,tel含SQL注入串,200,401,契约内拒绝
+/wx/address/save,编码异常,addressDetail含NUL字符,200,402,契约内拒绝
+/wx/address/save,类型混淆,isDefault="true"(字符串),200,0,正常受理
+/wx/cart/add,类型混淆,number="2"(字符串),200,0,正常受理
+/wx/cart/add,类型混淆,goodsId="1001",200,0,正常受理
+/wx/cart/add,类型混淆,number=2.5(小数),200,0,正常受理
+/wx/cart/add,类型混淆,goodsId=[1001],200,402,契约内拒绝
+/wx/cart/add,类型混淆,number=null,200,401,契约内拒绝
+/wx/order/submit,编码异常,UTF-8 BOM前缀,200,401,契约内拒绝
+/wx/order/submit,编码异常,含NUL字符,200,0,正常受理
+/wx/order/submit,编码异常,JSON尾部截断,200,401,契约内拒绝
+/wx/order/submit,编码异常,重复字段cartId,200,0,正常受理
+/wx/cart/add,极端数值,number=32768(Short溢出),200,402,契约内拒绝
+/wx/cart/add,极端数值,number=32767,200,711,业务码拒绝
+/wx/cart/add,极端数值,number=Integer.MAX_VALUE,200,402,契约内拒绝
+/wx/cart/add,极端数值,number=-1,200,401,契约内拒绝
+/wx/cart/add,极端数值,productId=0,200,0,正常受理
+/wx/cart/checked,安全攻击,productIds含SQL注入串,200,401,契约内拒绝
+/wx/cart/checked,类型混淆,isChecked="1"(字符串),200,0,正常受理
+/wx/cart/checked,极端数值,productIds=[2147483647],200,0,正常受理
+/wx/order/submit,极端数值,cartId=Integer.MAX_VALUE,200,402,契约内拒绝
+/wx/order/submit,极端数值,cartId=Integer.MIN_VALUE,200,402,契约内拒绝
+/wx/order/submit,极端数值,addressId=999999999,200,0,正常受理
+/wx/order/submit,极端数值,couponId=Integer.MAX_VALUE,200,402,契约内拒绝
+/wx/order/submit,极端数值,cartId=-1,200,402,契约内拒绝

@@ -275,7 +275,20 @@ public class WxOrderService {
                 : (grouponRules.getDiscount() == null ? BigDecimal.ZERO : grouponRules.getDiscount());
 
         List<LitemallCart> checkedGoodsList = resolveCheckedGoodsList(params.cartId, userId);
+        if (checkedGoodsList == null) {
+            // 实验三修复（IDOR）：cartId 对应的购物车记录不属于当前用户，越权下单
+            return ResponseUtil.unauthz();
+        }
         if (checkedGoodsList.isEmpty()) {
+            return ResponseUtil.badArgumentValue();
+        }
+        if (hasInvalidGoodsNumber(checkedGoodsList)) {
+            // 实验三修复：购物车数量必须为正整数，负数数量会算出负金额并造成 0 元订单、库存反向增加
+            return ResponseUtil.badArgumentValue();
+        }
+        if (hasProductProblem(checkedGoodsList)) {
+            // 实验三修复（未捕获异常）：货品已删除或库存不足时在下单前拦截，
+            // 避免 deductStock 抛 RuntimeException 被 GlobalExceptionHandler 兜成 errno=502
             return ResponseUtil.badArgumentValue();
         }
 
@@ -296,7 +309,14 @@ public class WxOrderService {
 
         addOrderGoods(order, checkedGoodsList);
         clearCart(params.cartId, userId);
-        deductStock(checkedGoodsList);
+        try {
+            deductStock(checkedGoodsList);
+        } catch (RuntimeException e) {
+            // 实验三修复（未捕获异常）：并发扣减失败等库存异常不再冒泡为 errno=502，
+            // 收敛为语义明确的 505（数据更新失败），由前端提示重试
+            logger.error("订单库存扣减失败 orderId=" + orderId, e);
+            return ResponseUtil.updatedDataFailed();
+        }
         useCoupon(params.couponId, params.userCouponId, orderId);
         Integer grouponLinkId = createGrouponRecord(params.grouponRulesId, params.grouponLinkId, userId, orderId);
 
@@ -397,6 +417,8 @@ public class WxOrderService {
 
     /**
      * 解析选中商品（cartId=0 表示购物车全部选中商品；人工重构：增加 cart 为空判空，修复潜在 NPE）
+     * <p>
+     * 实验三修复（IDOR）：cartId 非 0 时必须校验购物车记录归属当前用户，否则返回 null 表示越权。
      */
     private List<LitemallCart> resolveCheckedGoodsList(Integer cartId, Integer userId) {
         if (cartId.equals(0)) {
@@ -406,9 +428,44 @@ public class WxOrderService {
         if (cart == null) {
             return new ArrayList<>();
         }
+        if (!userId.equals(cart.getUserId())) {
+            return null;
+        }
         List<LitemallCart> list = new ArrayList<>(1);
         list.add(cart);
         return list;
+    }
+
+    /**
+     * 实验三新增：校验购物车商品数量合法（非 null 且为正），避免负数数量导致的负金额订单与库存反向增加。
+     */
+    private boolean hasInvalidGoodsNumber(List<LitemallCart> checkedGoodsList) {
+        for (LitemallCart cart : checkedGoodsList) {
+            if (cart.getNumber() == null || cart.getNumber() <= 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 货品有效性校验（实验三新增）。
+     * <p>
+     * 原实现直到 deductStock 才检查货品是否存在/库存是否充足，并以 RuntimeException 抛出，
+     * 被全局异常处理器兜成 errno=502，属于「未捕获异常导致 500 等效崩溃」。
+     * 此处提前到建单前校验，转为语义明确的 402 参数错误。
+     */
+    private boolean hasProductProblem(List<LitemallCart> checkedGoodsList) {
+        for (LitemallCart cart : checkedGoodsList) {
+            LitemallGoodsProduct product = productService.findById(cart.getProductId());
+            if (product == null) {
+                return true;
+            }
+            if (product.getNumber() != null && product.getNumber() - cart.getNumber() < 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -616,6 +673,10 @@ public class WxOrderService {
 
         // 异步发送邮件与短信通知；微信短信平台参数长度有限，订单号取 8-14 位，长度不足时整串发送（修复下标越界）
         LitemallOrder order = orderService.findById(orderId);
+        if (order == null) {
+            // 实验三修复：订单读取失败时直接返回，避免 order.getOrderSn() 抛出 NPE（502 崩溃）
+            return;
+        }
         notifyService.notifyMail("新订单通知", order.toString());
         String orderSn = order.getOrderSn();
         String smsOrderNo = orderSn.length() >= 14 ? orderSn.substring(8, 14) : orderSn;
@@ -1056,8 +1117,9 @@ public class WxOrderService {
 
         if (orderGoods != null) {
             Integer orderId = orderGoods.getOrderId();
-            LitemallOrder order = orderService.findById(orderId);
-            if (!order.getUserId().equals(userId)) {
+            // 实验三修复：订单按下单用户查询并判空，避免订单不存在时 order.getUserId() 抛出 NPE（500/502）
+            LitemallOrder order = orderService.findById(userId, orderId);
+            if (order == null || !userId.equals(order.getUserId())) {
                 return ResponseUtil.badArgument();
             }
         }
@@ -1132,7 +1194,8 @@ public class WxOrderService {
         orderGoodsService.updateById(orderGoods);
 
         // 3. 更新订单中未评价的订单商品可评价数量
-        Short commentCount = order.getComments();
+        // 实验三修复：comments 为 null 时先按 0 处理，避免自动拆箱 NPE
+        Short commentCount = order.getComments() == null ? 0 : order.getComments();
         if (commentCount > 0) {
             commentCount--;
         }
