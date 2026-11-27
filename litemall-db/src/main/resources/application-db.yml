@@ -11,10 +11,10 @@ spring:
       driver-class-name:  com.mysql.cj.jdbc.Driver
       username:  litemall
       password:  litemall123456
-      initial-size:  10
-      max-active:  50
-      min-idle:  10
-      max-wait:  60000
+      initial-size:  15
+      max-active:  80
+      min-idle:  15
+      max-wait:  10000
       pool-prepared-statements:  true
       max-pool-prepared-statement-per-connection-size:  20
       validation-query:  SELECT 1 FROM DUAL

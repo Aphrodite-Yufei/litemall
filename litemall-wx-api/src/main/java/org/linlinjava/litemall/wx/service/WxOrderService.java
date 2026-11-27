@@ -33,6 +33,7 @@ import org.linlinjava.litemall.wx.task.OrderUnpaidTask;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.util.Assert;
 
 import javax.servlet.http.HttpServletRequest;
@@ -302,6 +303,23 @@ public class WxOrderService {
                 ? SystemConfig.getFreight() : BigDecimal.ZERO;
         BigDecimal actualPrice = checkedGoodsPrice.add(freightPrice).subtract(couponPrice).max(BigDecimal.ZERO);
 
+        // 实验四修复（并发超卖）：库存扣减前置到订单落库之前。
+        // 改造前先 add 订单、后扣库存，扣减失败抛出的 RuntimeException 被 catch 吞掉，
+        // 方法以正常返回结束，Spring 事务照常提交 —— 订单入库、库存未扣，200 并发抢
+        // 50 件库存时订单数会显著大于 50（超卖）。前置后扣减失败时订单尚未写入，
+        // 并显式 setRollbackOnly 兜底，保证「要么都成功、要么都回滚」。
+        try {
+            if (!deductStock(checkedGoodsList)) {
+                // 快速失败路径：未写入任何数据，直接返回 505，不需要回滚，耗时更短
+                return ResponseUtil.updatedDataFailed();
+            }
+        } catch (RuntimeException e) {
+            // 慢路径：多商品扣减中途失败或并发竞态，必须回滚已扣的库存
+            logger.error("订单库存扣减失败 userId=" + userId, e);
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+            return ResponseUtil.updatedDataFailed();
+        }
+
         LitemallOrder order = buildOrder(userId, params, checkedAddress, grouponRules, grouponPrice,
                 checkedGoodsPrice, couponPrice, freightPrice, actualPrice);
         orderService.add(order);
@@ -309,14 +327,6 @@ public class WxOrderService {
 
         addOrderGoods(order, checkedGoodsList);
         clearCart(params.cartId, userId);
-        try {
-            deductStock(checkedGoodsList);
-        } catch (RuntimeException e) {
-            // 实验三修复（未捕获异常）：并发扣减失败等库存异常不再冒泡为 errno=502，
-            // 收敛为语义明确的 505（数据更新失败），由前端提示重试
-            logger.error("订单库存扣减失败 orderId=" + orderId, e);
-            return ResponseUtil.updatedDataFailed();
-        }
         useCoupon(params.couponId, params.userCouponId, orderId);
         Integer grouponLinkId = createGrouponRecord(params.grouponRulesId, params.grouponLinkId, userId, orderId);
 
@@ -461,9 +471,10 @@ public class WxOrderService {
             if (product == null) {
                 return true;
             }
-            if (product.getNumber() != null && product.getNumber() - cart.getNumber() < 0) {
-                return true;
-            }
+            // 实验四修复：此处不再比对库存余量。原判断是 TOCTOU 竞态——
+            // 200 个并发请求可能同时读到「余量 50」而全部放行，既挡不住超卖，
+            // 又多了一次与 deductStock 重复的商品查询。库存是否充足只由
+            // deductStock 中的原子条件更新（UPDATE ... WHERE number >= ?）裁定。
         }
         return false;
     }
@@ -565,21 +576,33 @@ public class WxOrderService {
      * 库存扣减（人工重构：增加 product 判空修复潜在 NPE；
      * 超卖防护依赖 DAO 层原子条件更新 reduceStock，本方法校验后触发）
      */
-    private void deductStock(List<LitemallCart> checkedGoodsList) {
+    /**
+     * 库存扣减。实验四修复要点：
+     * 1) 删除「先查 number 再减」的内存预判断——并发下两个线程会同时通过判断，
+     *    权威判定必须交给 reduceStock 的原子条件更新（UPDATE ... WHERE number >= ?）；
+     * 2) 由调用方保证在订单落库之前执行，并配合事务回滚，杜绝「订单有、库存无」；
+     * 3) 库存明显不足时走快速失败（返回 false），不抛异常、不进入回滚慢路径，
+     *    只有多商品扣减中途失败这种真正需要撤销已扣项的竞态才抛异常，保证吞吐。
+     *
+     * @return true 扣减成功；false 库存不足且尚未写入任何扣减
+     */
+    private boolean deductStock(List<LitemallCart> checkedGoodsList) {
+        boolean anyDeducted = false;
         for (LitemallCart checkGoods : checkedGoodsList) {
-            Integer productId = checkGoods.getProductId();
-            LitemallGoodsProduct product = productService.findById(productId);
-            if (product == null) {
-                throw new RuntimeException("商品货品不存在");
+            // 实验四性能优化：不再先 findById 查一次库存再判断。该写法既多一次数据库
+            // 往返（每单 +1 次 SELECT），又解决不了 TOCTOU 竞态。直接以原子条件更新的
+            // 返回值作为唯一权威判定：返回 0 即「库存不足或货品不存在」。
+            if (productService.reduceStock(checkGoods.getProductId(), checkGoods.getNumber()) == 0) {
+                if (!anyDeducted) {
+                    // 一件都没扣成功，快速失败，无需回滚
+                    return false;
+                }
+                // 多商品场景已扣了前面若干件，必须抛异常触发事务回滚
+                throw new RuntimeException("商品货品库存减少失败：库存不足或货品不存在");
             }
-            int remainNumber = product.getNumber() - checkGoods.getNumber();
-            if (remainNumber < 0) {
-                throw new RuntimeException("下单的商品货品数量大于库存量");
-            }
-            if (productService.reduceStock(productId, checkGoods.getNumber()) == 0) {
-                throw new RuntimeException("商品货品库存减少失败");
-            }
+            anyDeducted = true;
         }
+        return true;
     }
 
     /**
