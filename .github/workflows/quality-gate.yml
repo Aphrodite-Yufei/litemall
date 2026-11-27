@@ -58,6 +58,8 @@ jobs:
         run: |
           mvn -B -pl litemall-db org.pitest:pitest-maven:mutationCoverage \
             -Dmutators=STRONGER \
+            -DtargetClasses=org.linlinjava.litemall.db.service.CouponVerifyService \
+            -DtargetTests=org.linlinjava.litemall.db.service.CouponVerifyServiceTest \
             -DmutationThreshold=80 \
             -DcoverageThreshold=80 \
             -DoutputFormats=XML,HTML
