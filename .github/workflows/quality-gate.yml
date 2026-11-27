@@ -78,8 +78,10 @@ jobs:
       # ---------- 门禁 4：静态分析 ----------
       - name: 静态分析（SpotBugs 高危数 = 0）
         run: |
-          mvn -B -q -pl litemall-db -am compile spotbugs:check \
-            -Dspotbugs.effort=Max -Dspotbugs.threshold=High
+          mvn -B -q -pl litemall-db -am compile \
+            com.github.spotbugs:spotbugs-maven-plugin:4.8.6.4:check \
+            -Dspotbugs.effort=Max -Dspotbugs.threshold=High \
+            -Dspotbugs.excludeFilterFile=$GITHUB_WORKSPACE/.github/spotbugs-exclude.xml
 
       # ---------- 可选：SonarCloud ----------
       - name: SonarCloud 扫描（仓库变量 SONAR_ENABLED=true 时生效）

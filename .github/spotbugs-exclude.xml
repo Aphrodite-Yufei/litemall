@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 实验四门禁 4：排除 MyBatis Generator 自动生成的 domain 类。
+     这些类的 toString 由生成器产出，对数组字段直接调 toString，
+     属生成代码固有缺陷（DMI_INVOKING_TOSTRING_ON_ARRAY），不由人工维护。 -->
+<FindBugsFilter>
+  <Match>
+    <Package name="~org\.linlinjava\.litemall\.db\.domain.*" />
+  </Match>
+</FindBugsFilter>
