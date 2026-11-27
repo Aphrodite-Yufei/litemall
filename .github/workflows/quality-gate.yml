@@ -1,0 +1,92 @@
+name: quality-gate
+
+# 实验四 · CI/CD 质量门禁
+# 触发：push / PR 到 master
+# 门禁（任一不达标 → 红灯，禁止合并）：
+#   1. 单元测试：litemall-db 全部测试必须通过
+#   2. 覆盖率：CouponVerifyService 行覆盖 >= 95%、分支覆盖 >= 95%（JaCoCo）
+#   3. 变异测试：PIT STRONGER 变异得分 >= 80%
+#   4. 静态分析：SpotBugs 高危缺陷数 = 0
+#   5. 可选：配置 SONAR_TOKEN 后追加 SonarCloud 扫描（与实验一本地 SonarQube 口径一致）
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+env:
+  MAVEN_OPTS: "-Xmx1024m"
+
+jobs:
+  quality-gate:
+    name: 质量门禁（单测 + 覆盖率 + 变异 + 静态分析）
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 JDK 11
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
+          cache: maven
+
+      # ---------- 门禁 1：单元测试 + JaCoCo 覆盖率采集 ----------
+      - name: 单元测试与覆盖率采集
+        run: |
+          mvn -B -q -pl litemall-db -am install -DskipTests
+          mvn -B -pl litemall-db test \
+            -Dmaven.test.skip=false \
+            -Dtest='CouponVerifyService*Test' \
+            -DfailIfNoTests=false
+          ls -l litemall-db/target/site/jacoco/jacoco.csv
+
+      # ---------- 门禁 2：覆盖率红线 ----------
+      - name: 覆盖率门禁（核心类行/分支 >= 95%）
+        run: |
+          python3 .github/scripts/check_coverage.py \
+            litemall-db/target/site/jacoco/jacoco.csv \
+            CouponVerifyService 95 95
+
+      # ---------- 门禁 3：变异测试得分 ----------
+      - name: 变异测试门禁（PIT STRONGER >= 80%）
+        run: |
+          mvn -B -pl litemall-db org.pitest:pitest-maven:mutationCoverage \
+            -Dmutators=STRONGER \
+            -DmutationThreshold=80 \
+            -DcoverageThreshold=80 \
+            -DoutputFormats=XML,HTML
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          files = glob.glob("litemall-db/target/pit-reports/**/mutations.xml", recursive=True)
+          assert files, "未找到 PIT 报告"
+          root = ET.parse(files[0]).getroot()
+          killed = sum(1 for m in root.iter("mutation") if m.get("status") == "KILLED")
+          total = sum(1 for m in root.iter("mutation"))
+          score = killed * 100.0 / total
+          print(f"[mutation] killed={killed}/{total} score={score:.2f}%")
+          assert score >= 80, f"变异得分 {score:.2f}% 低于门禁 80%"
+          PY
+
+      # ---------- 门禁 4：静态分析 ----------
+      - name: 静态分析（SpotBugs 高危数 = 0）
+        run: |
+          mvn -B -q -pl litemall-db -am compile spotbugs:check \
+            -Dspotbugs.effort=Max -Dspotbugs.threshold=High
+
+      # ---------- 可选：SonarCloud ----------
+      - name: SonarCloud 扫描（仓库变量 SONAR_ENABLED=true 时生效）
+        if: ${{ vars.SONAR_ENABLED == 'true' }}
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          mvn -B sonar:sonar \
+            -Dsonar.projectKey=${{ github.repository_owner }}_litemall \
+            -Dsonar.organization=${{ github.repository_owner }} \
+            -Dsonar.host.url=https://sonarcloud.io \
+            -Dsonar.token=${{ secrets.SONAR_TOKEN }}
